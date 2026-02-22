@@ -20,7 +20,8 @@ def store_kvcache_kernel(
 ):
     idx = tl.program_id(0)
     slot = tl.load(slot_mapping_ptr + idx)
-    if slot == -1: return
+    if slot == -1:
+        return
     key_offsets = idx * key_stride + tl.arange(0, D)
     value_offsets = idx * value_stride + tl.arange(0, D)
     key = tl.load(key_ptr + key_offsets)
@@ -30,18 +31,25 @@ def store_kvcache_kernel(
     tl.store(v_cache_ptr + cache_offsets, value)
 
 
-def store_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, slot_mapping: torch.Tensor):
+def store_kvcache(
+    key: torch.Tensor,  # [B*L, 8, 128]
+    value: torch.Tensor,  # [B*L, 8, 128]
+    k_cache: torch.Tensor,  # [num_kvcache_blocks, 256, 8, 128]
+    v_cache: torch.Tensor,  # [num_kvcache_blocks, 256, 8, 128]
+    slot_mapping: torch.Tensor,  # [B*L]
+):
     N, num_heads, head_dim = key.shape
     D = num_heads * head_dim
     assert key.stride(-1) == 1 and value.stride(-1) == 1
     assert key.stride(1) == head_dim and value.stride(1) == head_dim
     assert k_cache.stride(1) == D and v_cache.stride(1) == D
     assert slot_mapping.numel() == N
-    store_kvcache_kernel[(N,)](key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D)
+    store_kvcache_kernel[(N,)](
+        key, key.stride(0), value, value.stride(0), k_cache, v_cache, slot_mapping, D
+    )
 
 
 class Attention(nn.Module):
-
     def __init__(
         self,
         num_heads,
@@ -56,20 +64,42 @@ class Attention(nn.Module):
         self.num_kv_heads = num_kv_heads
         self.k_cache = self.v_cache = torch.tensor([])
 
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor):
+    def forward(
+        self,
+        q: torch.Tensor,  # [B*L, 16, 128]
+        k: torch.Tensor,  # [B*L, 8, 128]
+        v: torch.Tensor,  # [B*L, 8, 128]
+    ):
         context = get_context()
-        k_cache, v_cache = self.k_cache, self.v_cache
+        k_cache, v_cache = (
+            self.k_cache,
+            self.v_cache,
+        )  # [num_kvcache_blocks, 256, 8, 128], [num_kvcache_blocks, 256, 8, 128]
         if k_cache.numel() and v_cache.numel():
             store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
         if context.is_prefill:
-            if context.block_tables is not None:    # prefix cache
+            if context.block_tables is not None:  # prefix cache
                 k, v = k_cache, v_cache
-            o = flash_attn_varlen_func(q, k, v,
-                                       max_seqlen_q=context.max_seqlen_q, cu_seqlens_q=context.cu_seqlens_q,
-                                       max_seqlen_k=context.max_seqlen_k, cu_seqlens_k=context.cu_seqlens_k,
-                                       softmax_scale=self.scale, causal=True, block_table=context.block_tables)
-        else:    # decode
-            o = flash_attn_with_kvcache(q.unsqueeze(1), k_cache, v_cache,
-                                        cache_seqlens=context.context_lens, block_table=context.block_tables, 
-                                        softmax_scale=self.scale, causal=True)
+            o = flash_attn_varlen_func(
+                q,
+                k,
+                v,
+                max_seqlen_q=context.max_seqlen_q,
+                cu_seqlens_q=context.cu_seqlens_q,
+                max_seqlen_k=context.max_seqlen_k,
+                cu_seqlens_k=context.cu_seqlens_k,
+                softmax_scale=self.scale,
+                causal=True,
+                block_table=context.block_tables,
+            )  # [B*L, 16, 128]
+        else:  # decode
+            o = flash_attn_with_kvcache(
+                q.unsqueeze(1),  # [B, 1, 16, 128]
+                k_cache,  # [num_kvcache_blocks, 256, 8, 128]
+                v_cache,  # [num_kvcache_blocks, 256, 8, 128]
+                cache_seqlens=context.context_lens,
+                block_table=context.block_tables,
+                softmax_scale=self.scale,
+                causal=True,
+            )
         return o

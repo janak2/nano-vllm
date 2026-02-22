@@ -74,20 +74,22 @@ class Qwen3Attention(nn.Module):
 
     def forward(
         self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
+        positions: torch.Tensor,  # [B*L]
+        hidden_states: torch.Tensor,  # [B*L, 1024]
     ) -> torch.Tensor:
-        qkv = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        q = q.view(-1, self.num_heads, self.head_dim)
-        k = k.view(-1, self.num_kv_heads, self.head_dim)
-        v = v.view(-1, self.num_kv_heads, self.head_dim)
+        qkv = self.qkv_proj(hidden_states)  # [B*L, 128*(num_heads+2*num_kv_heads)]
+        q, k, v = qkv.split(
+            [self.q_size, self.kv_size, self.kv_size], dim=-1
+        )  # [B*L, 128*num_heads], [B*L, 128*num_kv_heads], [B*L, 128*num_kv_heads]
+        q = q.view(-1, self.num_heads, self.head_dim)  # [B*L, 16, 128]
+        k = k.view(-1, self.num_kv_heads, self.head_dim)  # [B*L, 8, 128]
+        v = v.view(-1, self.num_kv_heads, self.head_dim)  # [B*L, 8, 128]
         if not self.qkv_bias:
             q = self.q_norm(q)
             k = self.k_norm(k)
         q, k = self.rotary_emb(positions, q, k)
-        o = self.attn(q, k, v)
-        output = self.o_proj(o.flatten(1, -1))
+        o = self.attn(q, k, v)  # [B*L, 16, 128]
+        output = self.o_proj(o.flatten(1, -1))  # [B*L, 1024]
         return output
 
 
@@ -153,12 +155,19 @@ class Qwen3DecoderLayer(nn.Module):
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if residual is None:
-            hidden_states, residual = self.input_layernorm(hidden_states), hidden_states
+            hidden_states, residual = (
+                self.input_layernorm(hidden_states),
+                hidden_states,
+            )  # [B*L, 1024], [B*L, 1024]
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
-        hidden_states = self.self_attn(positions, hidden_states)
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual
+            )  # [B*L, 1024], [B*L, 1024]
+        hidden_states = self.self_attn(positions, hidden_states)  # [B*L, 1024]
+        hidden_states, residual = self.post_attention_layernorm(
+            hidden_states, residual
+        )  # [B*L, 1024], [B*L, 1024]
+        hidden_states = self.mlp(hidden_states)  # [B*L, 1024]
         return hidden_states, residual
 
 
@@ -178,14 +187,18 @@ class Qwen3Model(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,
-        positions: torch.Tensor,
+        input_ids: torch.Tensor,  # [B*L]
+        positions: torch.Tensor,  # [B*L]
     ) -> torch.Tensor:
-        hidden_states = self.embed_tokens(input_ids)
+        hidden_states = self.embed_tokens(input_ids)  # [B*L, 1024]
         residual = None
         for layer in self.layers:
-            hidden_states, residual = layer(positions, hidden_states, residual)
-        hidden_states, _ = self.norm(hidden_states, residual)
+            hidden_states, residual = layer(
+                positions, hidden_states, residual
+            )  # [B*L, 1024], [B*L, 1024]
+        hidden_states, _ = self.norm(
+            hidden_states, residual
+        )  # [B*L, 1024], [B*L, 1024]
         return hidden_states
 
 
@@ -210,10 +223,10 @@ class Qwen3ForCausalLM(nn.Module):
         input_ids: torch.Tensor,
         positions: torch.Tensor,
     ) -> torch.Tensor:
-        return self.model(input_ids, positions)
+        return self.model(input_ids, positions)  # [B*L, 1024]
 
     def compute_logits(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: torch.Tensor,  # [B*L, 1024]
     ) -> torch.Tensor:
-        return self.lm_head(hidden_states)
+        return self.lm_head(hidden_states)  # [B, 151936]

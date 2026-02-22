@@ -186,19 +186,19 @@ class ModelRunner:
             block_tables = self.prepare_block_tables(seqs)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(
             non_blocking=True
-        )
+        )  # [B*L]
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(
             non_blocking=True
-        )
+        )  # [B*L]
         cu_seqlens_q = torch.tensor(
             cu_seqlens_q, dtype=torch.int32, pin_memory=True
-        ).cuda(non_blocking=True)
+        ).cuda(non_blocking=True)  # [B+1]
         cu_seqlens_k = torch.tensor(
             cu_seqlens_k, dtype=torch.int32, pin_memory=True
-        ).cuda(non_blocking=True)
+        ).cuda(non_blocking=True)  # [B+1]
         slot_mapping = torch.tensor(
             slot_mapping, dtype=torch.int32, pin_memory=True
-        ).cuda(non_blocking=True)
+        ).cuda(non_blocking=True)  # [B*L]
         set_context(
             True,
             cu_seqlens_q,
@@ -217,25 +217,25 @@ class ModelRunner:
         slot_mapping = []
         context_lens = []
         for seq in seqs:
-            input_ids.append(seq.last_token)
-            positions.append(len(seq) - 1)
-            context_lens.append(len(seq))
+            input_ids.append(seq.last_token)  # [B]
+            positions.append(len(seq) - 1)  # [B]
+            context_lens.append(len(seq))  # [B]
             slot_mapping.append(
                 seq.block_table[-1] * self.block_size + seq.last_block_num_tokens - 1
-            )
+            )  # [B]
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(
             non_blocking=True
-        )
+        )  # [B]
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(
             non_blocking=True
         )
         slot_mapping = torch.tensor(
             slot_mapping, dtype=torch.int32, pin_memory=True
-        ).cuda(non_blocking=True)
+        ).cuda(non_blocking=True)  # [B]
         context_lens = torch.tensor(
             context_lens, dtype=torch.int32, pin_memory=True
-        ).cuda(non_blocking=True)
-        block_tables = self.prepare_block_tables(seqs)
+        ).cuda(non_blocking=True)  # [B]
+        block_tables = self.prepare_block_tables(seqs)  # [B, max_num_blocks]
         set_context(
             False,
             slot_mapping=slot_mapping,
@@ -258,7 +258,9 @@ class ModelRunner:
         self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool
     ):
         if is_prefill or self.enforce_eager or input_ids.size(0) > 512:
-            return self.model.compute_logits(self.model(input_ids, positions))
+            return self.model.compute_logits(
+                self.model(input_ids, positions)
+            )  # [B, 151936]
         else:
             bs = input_ids.size(0)
             context = get_context()
@@ -281,10 +283,10 @@ class ModelRunner:
             self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
         )
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
-        logits = self.run_model(input_ids, positions, is_prefill)
+        logits = self.run_model(input_ids, positions, is_prefill)  # [B, 151936]
         token_ids = (
             self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
-        )
+        )  # [B]
         reset_context()
         return token_ids
 
