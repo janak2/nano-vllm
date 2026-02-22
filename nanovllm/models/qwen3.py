@@ -54,7 +54,6 @@ class Qwen3Attention(nn.Module):
             hidden_size,
             bias=False,
         )
-        print(self.head_dim, max_position, rope_theta, rope_scaling)
         self.rotary_emb = get_rope(
             self.head_dim,
             rotary_dim=self.head_dim,
