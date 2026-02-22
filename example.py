@@ -2,10 +2,11 @@ import os
 from nanovllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from huggingface_hub import snapshot_download
+from pathlib import Path
 
 
 def main():
-    path = snapshot_download("Qwen/Qwen3-0.6B")
+    path = snapshot_download("Qwen/Qwen3-0.6B", local_dir=Path(__file__).parent.parent)
     print(path)
     tokenizer = AutoTokenizer.from_pretrained(path)
     llm = LLM(path, enforce_eager=True, tensor_parallel_size=1)
