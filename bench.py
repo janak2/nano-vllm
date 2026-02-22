@@ -9,12 +9,12 @@ from huggingface_hub import snapshot_download
 
 def main():
     seed(0)
-    num_seqs = 256
+    num_seqs = 1
     max_input_len = 1024
     max_ouput_len = 1024
 
     path = snapshot_download("Qwen/Qwen3-0.6B")
-    llm = LLM(path, enforce_eager=False, max_model_len=4096)
+    llm = LLM(path, enforce_eager=False, max_model_len=4096, max_num_seqs=num_seqs)
 
     prompt_token_ids = [
         [randint(0, 10000) for _ in range(randint(100, max_input_len))]
@@ -27,7 +27,7 @@ def main():
         for _ in range(num_seqs)
     ]
     # uncomment the following line for vllm
-    # prompt_token_ids = [dict(prompt_token_ids=p) for p in prompt_token_ids]
+    prompt_token_ids = [dict(prompt_token_ids=p) for p in prompt_token_ids]
 
     llm.generate(["Benchmark: "], SamplingParams())
     t = time.time()
